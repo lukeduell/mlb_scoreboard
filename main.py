@@ -1,9 +1,12 @@
-# main.py
 import time
-import datetime
+from datetime import datetime
 from rgbmatrix import RGBMatrix, RGBMatrixOptions, graphics
 
-from scoreboard_data import fetch_today_tigers_game, fetch_last_final_tigers_game
+from data.game import Game
+from data.update import UpdateStatus
+from data.team import TEAM_ID_NAME
+import debug
+
 from scoreboard_layout import get_default_font
 from scoreboard_colors import get_scoreboard_color
 from scoreboard_draw import (
@@ -11,13 +14,27 @@ from scoreboard_draw import (
     draw_teams_and_score, draw_bases, draw_outs, draw_inning_arrow
 )
 
+def fetch_today_tigers_game():
+    # Replace this with logic to fetch today's Tigers game using the Game class
+    tigers_id = 116  # Detroit Tigers team ID
+    today = datetime.now().strftime("%Y-%m-%d")
+    try:
+        games = Game.from_scheduled({"game_id": tigers_id, "game_date": today}, delay=10)
+        return games
+    except Exception as e:
+        debug.error(f"Error fetching today's Tigers game: {e}")
+        return None
+
+def fetch_last_final_tigers_game():
+    # Replace this with logic to fetch the last final Tigers game using the Game class
+    return None  # Placeholder for now
+
 def main():
     # 1) Configure the LED Matrix
     options = RGBMatrixOptions()
     options.rows = 32
     options.cols = 64
     options.chain_length = 1
-    # If Adafruit HAT, set this:
     options.hardware_mapping = "adafruit-hat"
     options.gpio_slowdown = 3
     options.disable_hardware_pulsing = True
@@ -26,43 +43,39 @@ def main():
     matrix = RGBMatrix(options=options)
     canvas = matrix.CreateFrameCanvas()
 
-    # 2) Load default font from w64h32.json
-    font_name = get_default_font()  # e.g. "4x6"
+    # 2) Load default font
+    font_name = get_default_font()
     font_path = f"/home/pi/rpi-rgb-led-matrix/fonts/{font_name}.bdf"
     fnt = graphics.Font()
     fnt.LoadFont(font_path)
 
     while True:
         # 3) Attempt to fetch today's Tigers game
-        game_data = fetch_today_tigers_game()
-        if not game_data:
+        game = fetch_today_tigers_game()
+        if not game:
             # No game => last final or offday
             final_data = fetch_last_final_tigers_game()
             canvas.Clear()
             if not final_data:
-                # show offday
                 draw_offday(canvas, fnt)
             else:
-                # show final scoreboard
                 draw_final(canvas, fnt, final_data)
                 draw_teams_and_score(canvas, fnt, final_data)
             matrix.SwapOnVSync(canvas)
             time.sleep(60)
             continue
 
-        # Check status from the game_data
-        status = game_data["status"].lower()  # e.g. "scheduled", "pre-game", "in progress", "final"
+        # Check status from the game object
+        status = game.status().lower()
 
         # 4) In-Progress
         if "progress" in status:
             while True:
                 updated = fetch_today_tigers_game()
                 if not updated:
-                    # Maybe the game ended
                     break
-                new_stat = updated["status"].lower()
+                new_stat = updated.status().lower()
                 if "final" in new_stat or "game over" in new_stat:
-                    # Switched to final
                     canvas.Clear()
                     draw_final(canvas, fnt, updated)
                     draw_teams_and_score(canvas, fnt, updated)
@@ -71,7 +84,6 @@ def main():
                     break
 
                 canvas.Clear()
-                # fill background
                 bg_col = get_scoreboard_color("default", "background")
                 fill_rect(canvas, 0, 0, 64, 32, bg_col)
 
@@ -87,24 +99,21 @@ def main():
         # 5) If direct final
         elif "final" in status:
             canvas.Clear()
-            draw_final(canvas, fnt, game_data)
-            draw_teams_and_score(canvas, fnt, game_data)
+            draw_final(canvas, fnt, game)
+            draw_teams_and_score(canvas, fnt, game)
             matrix.SwapOnVSync(canvas)
             time.sleep(60)
 
         # 6) Pre-game or scheduled
         else:
-            # "Scheduled", "Pre-Game", "Warmup"
             while True:
                 updated = fetch_today_tigers_game()
                 if not updated:
                     break
-                new_stat = updated["status"].lower()
+                new_stat = updated.status().lower()
                 if "progress" in new_stat:
-                    # Switch to in-progress
                     break
                 if "final" in new_stat or "game over" in new_stat:
-                    # Possibly the game ended
                     canvas.Clear()
                     draw_final(canvas, fnt, updated)
                     draw_teams_and_score(canvas, fnt, updated)
@@ -113,11 +122,10 @@ def main():
                     break
 
                 canvas.Clear()
-                draw_pregame(canvas, fnt, updated)      # shows pitcher matchup, start time
-                draw_teams_and_score(canvas, fnt, updated)  
+                draw_pregame(canvas, fnt, updated)
+                draw_teams_and_score(canvas, fnt, updated)
                 matrix.SwapOnVSync(canvas)
                 time.sleep(30)
 
 if __name__ == "__main__":
-    from scoreboard_draw import fill_rect
     main()
